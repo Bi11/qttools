@@ -46,6 +46,10 @@
 // no location information, but typically reside at opposite ends of the file).
 #define MAGIC_OBSOLETE_REFERENCE "Obsolete_PO_entries"
 
+// To avoid duplicated id from different <file> tags in Xcode style Xliff file,
+// append <trans-unit> id with the following separator and its filename.
+#define XCODE_XLIFF_ID_SEPARATOR QChar(Translator::TextVariantSeparator)
+
 QT_BEGIN_NAMESPACE
 
 /**
@@ -282,7 +286,7 @@ static void writeTransUnits(QTextStream &ts, const TranslatorMessage &msg, const
             state = " state=\"needs-review-translation\"";
         }
         writeIndent(ts, indent);
-        ts << "<trans-unit id=\"" << msgidstr;
+        ts << "<trans-unit id=\"" << protect(msgidstr);
         if (msg.isPlural())
             ts << "[" << plural++ << "]";
         ts << "\"" << attribs << ">\n";
@@ -368,11 +372,53 @@ static void writeMessage(QTextStream &ts, const TranslatorMessage &msg, const QR
     }
 }
 
+static void writeMessageXcodeStyle(QTextStream &ts, const TranslatorMessage &msg, const QRegExp &drops, int indent)
+{
+    int sep = msg.id().lastIndexOf(XCODE_XLIFF_ID_SEPARATOR);
+    QString msgidstr = (sep == -1) ? msg.id() : msg.id().left(sep);
+
+    QByteArray attribs;
+    QByteArray state;
+
+    if (msg.type() == TranslatorMessage::Unfinished) {
+        state = " state=\"needs-review-translation\"";
+    }
+
+    writeIndent(ts, indent);
+    ts << "<trans-unit id=\"" << protect(msgidstr);
+    ts << "\"" << attribs << ">\n";
+    ++indent;
+
+    writeIndent(ts, indent);
+    ts << "<source>" << protect(msg.sourceText()) << "</source>\n";
+
+    if (!msg.translations().isEmpty()) {
+        if (!msg.translations()[0].isNull() || msg.type() != TranslatorMessage::Unfinished) {
+            writeIndent(ts, indent);
+            ts << "<target" << state << ">" << protect(msg.translations()[0]) << "</target>\n";
+        }
+    }
+
+    if (!msg.extraComment().isEmpty()) {
+        writeIndent(ts, indent);
+        ts << "<note>"
+           << protect(msg.extraComment()) << "</note>\n";
+    }
+    if (!msg.translatorComment().isEmpty()) {
+        writeIndent(ts, indent);
+        ts << "<note from=\"translator\">"
+           << protect(msg.translatorComment()) << "</note>\n";
+    }
+
+    --indent;
+    writeIndent(ts, indent);
+    ts << "</trans-unit>\n";
+}
 
 class XLIFFHandler : public QXmlDefaultHandler
 {
 public:
-    XLIFFHandler(Translator &translator, ConversionData &cd);
+    XLIFFHandler(Translator &translator, ConversionData &cd, bool isXcodeStyle);
 
     bool startElement(const QString& namespaceURI, const QString &localName,
         const QString &qName, const QXmlAttributes &atts );
@@ -413,6 +459,7 @@ private:
 private:
     Translator &m_translator;
     ConversionData &m_cd;
+    bool m_isXcodeStyle;
     QString m_language;
     QString m_sourceLanguage;
     QString m_context;
@@ -442,8 +489,8 @@ private:
     QStack<int> m_contextStack;
 };
 
-XLIFFHandler::XLIFFHandler(Translator &translator, ConversionData &cd)
-  : m_translator(translator), m_cd(cd),
+XLIFFHandler::XLIFFHandler(Translator &translator, ConversionData &cd, bool isXcodeStyle)
+  : m_translator(translator), m_cd(cd), m_isXcodeStyle(isXcodeStyle),
     m_translate(true),
     m_approved(true),
     m_lineNumber(-1),
@@ -524,8 +571,12 @@ bool XLIFFHandler::startElement(const QString& namespaceURI,
                 m_translate = false;
         if (!hasContext(XC_restype_plurals)) {
             m_id = atts.value(QLatin1String("id"));
-            if (m_id.startsWith(QLatin1String("_msg")))
-                m_id.clear();
+            if (m_isXcodeStyle) {
+                m_id.append(XCODE_XLIFF_ID_SEPARATOR).append(m_fileName);
+            } else {
+                if (m_id.startsWith(QLatin1String("_msg")))
+                    m_id.clear();
+            }
         }
         if (atts.value(QLatin1String("approved")) != QLatin1String("yes"))
             m_approved = false;
@@ -538,6 +589,9 @@ bool XLIFFHandler::startElement(const QString& namespaceURI,
     } else if (localName == QLatin1String("target")) {
         if (atts.value(QLatin1String("restype")) != QLatin1String(restypeDummy))
             pushContext(XC_restype_translation);
+        if (m_isXcodeStyle) {
+            m_approved |= atts.value(QLatin1String("state")) != QLatin1String("needs-review-translation");
+        }
     } else if (localName == QLatin1String("context-group")) {
         QString purpose = atts.value(QLatin1String("purpose"));
         if (purpose == QLatin1String("location"))
@@ -557,11 +611,18 @@ bool XLIFFHandler::startElement(const QString& namespaceURI,
         else if (ctxtype == QLatin1String(contextOldMsgctxt))
             pushContext(XC_context_old_comment);
     } else if (localName == QLatin1String("note")) {
-        if (atts.value(QLatin1String("annotates")) == QLatin1String("source") &&
-            atts.value(QLatin1String("from")) == QLatin1String("developer"))
-            pushContext(XC_extra_comment);
-        else
-            pushContext(XC_translator_comment);
+        if (m_isXcodeStyle) {
+            if (atts.value(QLatin1String("from")) != QLatin1String("translator"))
+                pushContext(XC_extra_comment);
+            else
+                pushContext(XC_translator_comment);
+        } else {
+            if (atts.value(QLatin1String("annotates")) == QLatin1String("source") &&
+                atts.value(QLatin1String("from")) == QLatin1String("developer"))
+                pushContext(XC_extra_comment);
+            else
+                pushContext(XC_translator_comment);
+        }
     } else if (localName == QLatin1String("ph")) {
         QString ctype = atts.value(QLatin1String("ctype"));
         if (ctype.startsWith(QLatin1String("x-ch-")))
@@ -693,14 +754,15 @@ bool XLIFFHandler::finalizeMessage(bool isPlural)
     if (!m_translate && m_refs.size() == 1
         && m_refs.at(0).fileName() == QLatin1String(MAGIC_OBSOLETE_REFERENCE))
         m_refs.clear();
+
     TranslatorMessage::Type type
             = m_translate ? (m_approved ? TranslatorMessage::Finished : TranslatorMessage::Unfinished)
                           : (m_approved ? TranslatorMessage::Vanished : TranslatorMessage::Obsolete);
-    TranslatorMessage msg(m_context, m_sources[0],
-                          m_comment, QString(), QString(), -1,
+    TranslatorMessage msg(m_isXcodeStyle ? m_fileName: m_context, m_sources[0],
+                          m_comment, QString(), m_fileName, -1,
                           m_translations, type, isPlural);
     msg.setId(m_id);
-    msg.setReferences(m_refs);
+    if (!m_refs.isEmpty()) msg.setReferences(m_refs);
     msg.setOldComment(m_oldComment);
     msg.setExtraComment(m_extraComment);
     msg.setTranslatorComment(m_translatorComment);
@@ -740,17 +802,27 @@ bool XLIFFHandler::fatalError(const QXmlParseException &exception)
     return false;
 }
 
-bool loadXLIFF(Translator &translator, QIODevice &dev, ConversionData &cd)
+bool loadXLIFF(Translator &translator, QIODevice &dev, ConversionData &cd, bool isXcodeStyle)
 {
     QXmlInputSource in(&dev);
     QXmlSimpleReader reader;
-    XLIFFHandler hand(translator, cd);
+    XLIFFHandler hand(translator, cd, isXcodeStyle);
     reader.setContentHandler(&hand);
     reader.setErrorHandler(&hand);
     return reader.parse(in);
 }
 
-bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd)
+bool loadXlfXLIFF(Translator &translator, QIODevice &dev, ConversionData &cd)
+{
+    return loadXLIFF(translator, dev, cd, false);
+}
+
+bool loadXcodeXLIFF(Translator &translator, QIODevice &dev, ConversionData &cd)
+{
+    return loadXLIFF(translator, dev, cd, true);
+}
+
+bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd, bool isXcodeStyle)
 {
     bool ok = true;
     int indent = 0;
@@ -802,20 +874,25 @@ bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd)
         ++indent;
 
         foreach (const QString &ctx, contextOrder[fn]) {
-            if (!ctx.isEmpty()) {
-                writeIndent(ts, indent);
-                ts << "<group restype=\"" << restypeContext << "\""
-                    << " resname=\"" << protect(ctx) << "\">\n";
-                ++indent;
-            }
-
-            foreach (const TranslatorMessage &msg, messageOrder[fn][ctx])
-                writeMessage(ts, msg, drops, indent);
-
-            if (!ctx.isEmpty()) {
-                --indent;
-                writeIndent(ts, indent);
-                ts << "</group>\n";
+            if (isXcodeStyle) {
+                foreach (const TranslatorMessage &msg, messageOrder[fn][ctx])
+                    writeMessageXcodeStyle(ts, msg, drops, indent);
+            } else {
+                if (!ctx.isEmpty()) {
+                    writeIndent(ts, indent);
+                    ts << "<group restype=\"" << restypeContext << "\""
+                        << " resname=\"" << protect(ctx) << "\">\n";
+                    ++indent;
+                }
+    
+                foreach (const TranslatorMessage &msg, messageOrder[fn][ctx])
+                    writeMessage(ts, msg, drops, indent);
+    
+                if (!ctx.isEmpty()) {
+                    --indent;
+                    writeIndent(ts, indent);
+                    ts << "</group>\n";
+                }
             }
         }
 
@@ -830,6 +907,16 @@ bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd)
     return ok;
 }
 
+bool saveXlfXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd)
+{
+    return saveXLIFF(translator, dev, cd, false);
+}
+
+bool saveXcodeXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd)
+{
+    return saveXLIFF(translator, dev, cd, true);
+}
+
 int initXLIFF()
 {
     Translator::FileFormat format;
@@ -837,12 +924,27 @@ int initXLIFF()
     format.untranslatedDescription = QT_TRANSLATE_NOOP("FMT", "XLIFF localization files");
     format.fileType = Translator::FileFormat::TranslationSource;
     format.priority = 1;
-    format.loader = &loadXLIFF;
-    format.saver = &saveXLIFF;
+    format.loader = &loadXlfXLIFF;
+    format.saver = &saveXlfXLIFF;
     Translator::registerFileFormat(format);
     return 1;
 }
 
 Q_CONSTRUCTOR_FUNCTION(initXLIFF)
+
+int initXcodeXLIFF()
+{
+    Translator::FileFormat format;
+    format.extension = QLatin1String("xliff");
+    format.untranslatedDescription = QT_TRANSLATE_NOOP("FMT", "Xcode (XLIFF) localization files");
+    format.fileType = Translator::FileFormat::TranslationSource;
+    format.priority = 1;
+    format.loader = &loadXcodeXLIFF;
+    format.saver = &saveXcodeXLIFF;
+    Translator::registerFileFormat(format);
+    return 1;
+}
+
+Q_CONSTRUCTOR_FUNCTION(initXcodeXLIFF)
 
 QT_END_NAMESPACE
