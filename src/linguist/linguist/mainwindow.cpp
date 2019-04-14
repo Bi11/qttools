@@ -833,8 +833,20 @@ void MainWindow::saveAs()
     if (m_currentIndex.model() < 0)
         return;
 
-    QString newFilename = QFileDialog::getSaveFileName(this, QString(), m_dataModel->srcFileName(m_currentIndex.model()),
-        fileFilters(false));
+    QString fn = m_dataModel->srcFileName(m_currentIndex.model());
+    QString filters = fileFilters(false);
+    QString defaultFilter;
+    QString suffix = QFileInfo(fn).suffix();
+    if (!suffix.isEmpty()) {
+        QString match = QString(QLatin1String("(*.%1)")).arg(suffix);
+        for (const QString& f: filters.split(QLatin1String(";;"))) {
+            if (f.endsWith(match)) {
+                defaultFilter = f;
+            }
+        }
+    }
+    QString newFilename = QFileDialog::getSaveFileName(this, QString(), fn,
+        filters, defaultFilter.isNull() ? nullptr : &defaultFilter);
     if (!newFilename.isEmpty()) {
         if (m_dataModel->saveAs(m_currentIndex.model(), newFilename, this)) {
             updateCaption();
