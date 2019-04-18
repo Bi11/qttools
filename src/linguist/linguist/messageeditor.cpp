@@ -129,6 +129,7 @@ void MessageEditor::setupEditorPage()
     m_commentText->setWhatsThis(tr("This area shows a comment that"
                         " may guide you, and the context in which the text"
                         " occurs.") );
+    m_commentText->setOpacity(0.5);
     connect(m_commentText, SIGNAL(selectionChanged(QTextEdit*)),
             SLOT(selectionChanged(QTextEdit*)));
 
@@ -189,6 +190,7 @@ void MessageEditor::messageModelAppended()
     ed.transCommentText->setHideWhenEmpty(!writable);
     ed.transCommentText->setWhatsThis(tr("Here you can enter comments for your own use."
                         " They have no effect on the translated applications.") );
+    ed.transCommentText->setOpacity(0.5);
     ed.transCommentText->getEditor()->installEventFilter(this);
     ed.transCommentText->getEditor()->setVisualizeWhitespace(m_visualizeWhitespace);
     connect(ed.transCommentText, SIGNAL(selectionChanged(QTextEdit*)),

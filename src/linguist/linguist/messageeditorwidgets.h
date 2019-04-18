@@ -106,6 +106,7 @@ public:
     QString getTranslation() { return m_editor->toPlainText(); }
     void setEditingEnabled(bool enable);
     void setHideWhenEmpty(bool optional) { m_hideWhenEmpty = optional; }
+    void setOpacity(qreal opacity);
     FormatTextEdit *getEditor() { return m_editor; }
 
 signals:

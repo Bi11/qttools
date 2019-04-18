@@ -36,6 +36,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDebug>
+#include <QGraphicsOpacityEffect>
 #include <QLayout>
 #include <QMenu>
 #include <QMessageBox>
@@ -214,6 +215,23 @@ void FormWidget::setEditingEnabled(bool enable)
     // Use read-only state so that the text can still be copied
     m_editor->setReadOnly(!enable);
     m_label->setEnabled(enable);
+}
+
+void FormWidget::setOpacity(qreal opacity)
+{
+    if (opacity >= 1) {
+        m_editor->setGraphicsEffect(nullptr);
+        m_label->setGraphicsEffect(nullptr);
+    } else {
+        QGraphicsOpacityEffect* effect;
+        effect = new QGraphicsOpacityEffect();
+        effect->setOpacity(opacity);
+        m_label->setGraphicsEffect(effect);
+        effect = new QGraphicsOpacityEffect();
+        effect->setOpacity(opacity);
+        m_editor->setGraphicsEffect(effect);
+        m_editor->viewport()->setAutoFillBackground(false);
+    }
 }
 
 
