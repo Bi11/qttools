@@ -372,7 +372,39 @@ static void writeMessage(QTextStream &ts, const TranslatorMessage &msg, const QR
     }
 }
 
-static void writeMessageXcodeStyle(QTextStream &ts, const TranslatorMessage &msg, const QRegExp &drops, int indent)
+static QString protectWithXcodeStyle(const QString &str, bool isStrict = false)
+{
+    QString result;
+    int len = str.size();
+    for (int i = 0; i != len; ++i) {
+        uint c = str.at(i).unicode();
+        switch (c) {
+        case '\"':
+            result += isStrict ? QLatin1String("&quot;") : QLatin1String("\"");
+            break;
+        case '\'':
+            result += isStrict ? QLatin1String("&apos;") : QLatin1String("\"");
+            break;
+        case '&':
+            result += QLatin1String("&amp;");
+            break;
+        case '>':
+            result += QLatin1String("&gt;");
+            break;
+        case '<':
+            result += QLatin1String("&lt;");
+            break;
+        default:
+            if (c < 0x20 && (isStrict || (c != '\r' && c != '\n' && c != '\t')))
+                result += QString::fromLatin1("&#%1;").arg(QString::number(c, 10));
+            else
+                result += QChar(c);
+        }
+    }
+    return result;
+}
+
+static void writeMessageWithXcodeStyle(QTextStream &ts, const TranslatorMessage &msg, const QRegExp &drops, int indent)
 {
     int sep = msg.id().lastIndexOf(XCODE_XLIFF_ID_SEPARATOR);
     QString msgidstr = (sep == -1) ? msg.id() : msg.id().left(sep);
@@ -385,29 +417,29 @@ static void writeMessageXcodeStyle(QTextStream &ts, const TranslatorMessage &msg
     }
 
     writeIndent(ts, indent);
-    ts << "<trans-unit id=\"" << protect(msgidstr);
+    ts << "<trans-unit id=\"" << protectWithXcodeStyle(msgidstr, true);
     ts << "\"" << attribs << ">\n";
     ++indent;
 
     writeIndent(ts, indent);
-    ts << "<source>" << protect(msg.sourceText()) << "</source>\n";
+    ts << "<source>" << protectWithXcodeStyle(msg.sourceText()) << "</source>\n";
 
     if (!msg.translations().isEmpty()) {
         if (!msg.translations()[0].isNull() || msg.type() != TranslatorMessage::Unfinished) {
             writeIndent(ts, indent);
-            ts << "<target" << state << ">" << protect(msg.translations()[0]) << "</target>\n";
+            ts << "<target" << state << ">" << protectWithXcodeStyle(msg.translations()[0]) << "</target>\n";
         }
     }
 
     if (!msg.extraComment().isEmpty()) {
         writeIndent(ts, indent);
         ts << "<note>"
-           << protect(msg.extraComment()) << "</note>\n";
+           << protectWithXcodeStyle(msg.extraComment()) << "</note>\n";
     }
     if (!msg.translatorComment().isEmpty()) {
         writeIndent(ts, indent);
         ts << "<note from=\"translator\">"
-           << protect(msg.translatorComment()) << "</note>\n";
+           << protectWithXcodeStyle(msg.translatorComment()) << "</note>\n";
     }
 
     --indent;
@@ -866,7 +898,7 @@ bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd,
     languageCode.replace(QLatin1Char('_'), QLatin1Char('-'));
     foreach (const QString &fn, fileOrder) {
         writeIndent(ts, indent);
-        ts << "<file original=\"" << fn << "\""
+        ts << "<file original=\"" << protect(fn, false) << "\""
             << " datatype=\"" << dataType(messageOrder[fn].begin()->first()) << "\""
             << " source-language=\"" << sourceLanguageCode.toLatin1() << "\""
             << " target-language=\"" << languageCode.toLatin1() << "\""
@@ -876,7 +908,7 @@ bool saveXLIFF(const Translator &translator, QIODevice &dev, ConversionData &cd,
         foreach (const QString &ctx, contextOrder[fn]) {
             if (isXcodeStyle) {
                 foreach (const TranslatorMessage &msg, messageOrder[fn][ctx])
-                    writeMessageXcodeStyle(ts, msg, drops, indent);
+                    writeMessageWithXcodeStyle(ts, msg, drops, indent);
             } else {
                 if (!ctx.isEmpty()) {
                     writeIndent(ts, indent);
